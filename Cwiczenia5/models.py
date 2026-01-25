@@ -1,96 +1,93 @@
+import tensorflow as tf
+from tensorflow.keras import Sequential, layers
 
-import tensorflow as tf  # Import biblioteki TensorFlow (typ: module) - framework uczenia maszynowego
-from tensorflow.keras import Sequential, layers  # Import klasy Sequential i modułu layers (typ: class, module)
 
-def build_model(hp):
-    """
-    Buduje model Keras (Dense lub CNN) zgodny z Keras Tuner.
-    Argument 'hp' to obiekt HyperParameters z library keras-tuner.
-    """
-    # Inicjalizacja pustego modelu sekwencyjnego (typ: keras.engine.sequential.Sequential)
-    model = Sequential()
+def build_model(hp):  # Konstruuje i kompiluje model Keras na podstawie przekazanych hiperparametrów.
+    model = Sequential()  # Inicjalizuje pusty model sekwencyjny.
     
-    # Warstwa wejściowa - explicite zdefiniowana
-    # shape=(28, 28, 1) oznacza obraz 28x28 pikseli z 1 kanałem koloru (skala szarości)
-    model.add(layers.Input(shape=(28, 28, 1)))  # (typ: keras.engine.base_layer.Layer)
+    # Warstwa wejściowa.
+    # Obrazy Fashion MNIST mają wymiar 28x28 pikseli i 1 kanał (skala szarości).
+    model.add(layers.Input(shape=(28, 28, 1)))  # Definiuje kształt danych wejściowych.
     
-    # --- BONUS: Augmentacja Danych ---
-    # Sprawdzenie warunku logicznego zdefiniowanego w hyperparametrach
-    # hp.Boolean zwraca wartość True lub False (typ: bool)
-    if hp.Boolean("use_augmentation", default=True):
-        # Dodanie warstwy losowego odbicia w poziomie (typ: keras.layers.preprocessing.image_preprocessing.RandomFlip)
-        model.add(layers.RandomFlip("horizontal"))
-        # Dodanie warstwy losowego obrotu o max 10% (typ: keras.layers.preprocessing.image_preprocessing.RandomRotation)
-        model.add(layers.RandomRotation(0.1))
-        # Dodanie warstwy losowego przybliżenia o max 10% (typ: keras.layers.preprocessing.image_preprocessing.RandomZoom)
-        model.add(layers.RandomZoom(0.1))
+    # --- Sekcja Augmentacji Danych ---
+    # Zwiększanie różnorodności danych przez losowe modyfikacje.
+    # Zapobiega to zapamiętywaniu konkretnych przykładów przez sieć (overfitting).
+    if hp.Boolean("use_augmentation", default=True):  # Sprawdza, czy augmentacja jest włączona w hiperparametrach.
+        # Losowe odbicie w poziomie (sensowne dla ubrań, np. koszulka czy but).
+        model.add(layers.RandomFlip("horizontal"))  # Dodaje warstwę losowego odbicia poziomego.
+        # Delikatny obrót (ok. +/- 36 stopni).
+        model.add(layers.RandomRotation(0.1))  # Dodaje warstwę losowego obrotu.
+        # Losowe skalowanie (zoom +/- 10%).
+        model.add(layers.RandomZoom(0.1))  # Dodaje warstwę losowego skalowania.
 
-    # Wybór architektury: Dense (MLP) vs CNN
-    # hp.Choice wybiera jedną wartość z listy stringów (typ: str)
-    model_type = hp.Choice("model_type", ["dense", "cnn"])
+    # Wybór fundamentu architektury: "dense" (MLP) lub "cnn" (ConvNet).
+    model_type = hp.Choice("model_type", ["dense", "cnn"])  # Losuje typ architektury.
     
-    # Warunek sprawdzający wybraną architekturę
-    if model_type == "dense":
-        # Architektura oparta o warstwy gęste (Fully Connected)
+    if model_type == "dense":  # Obsługuje przypadek architektury gęstej (MLP).
+        # === Architektura Dense (MLP) ===
+        # Prosta sieć oparta na spłaszczonym wektorze.
         
-        # Spłaszczenie wejścia 2D (28, 28, 1) do wektora 1D (784,) (typ: keras.layers.core.flatten.Flatten)
-        model.add(layers.Flatten())
+        # Spłaszczenie obrazu 2D do wektora 1D (28*28 = 784 wejścia).
+        model.add(layers.Flatten())  # Dodaje warstwę spłaszczającą.
         
-        # Pętla for iterująca przez liczbę warstw ukrytych wybraną przez tunera
-        # hp.Int zwraca liczbę całkowitą z zakresu 1-3 (typ: int)
-        for i in range(hp.Int("dense_layers", 1, 3)):
-            # Dodanie warstwy gęstej (Dense)
-            # units: liczba neuronów (int, od 32 do 256, krok 32)
-            # activation: funkcja aktywacji ("relu")
-            model.add(layers.Dense(
-                units=hp.Int(f"dense_units_{i}", 32, 256, step=32),  # (typ: int)
-                activation="relu"  # (typ: str)
-            ))  # (typ: keras.layers.core.dense.Dense)
+        # Dynamiczna liczba warstw ukrytych (od 1 do 3).
+        for i in range(hp.Int("dense_layers", 1, 3)):  # Iteruje przez wylosowaną liczbę warstw.
+            # Warstwa gęsta z aktywacją ReLU.
+            # Liczba neuronów jest dobierana dynamicznie w zakresie 32-256.
+            model.add(layers.Dense(  # Dodaje warstwę gęstą.
+                units=hp.Int(f"dense_units_{i}", 32, 256, step=32),  # Losuje liczbę neuronów.
+                activation="relu"  # Ustawia funkcję aktywacji ReLU.
+            ))
             
-            # Opcjonalne dodanie warstwy Dropout dla regularyzacji (zapobieganie overfittingowi)
-            # hp.Boolean zwraca bool (typ: bool)
-            if hp.Boolean("use_dropout", default=False):
-                # Warstwa porzucająca 20% neuronów (typ: keras.layers.regularization.dropout.Dropout)
-                model.add(layers.Dropout(0.2))
+            # Opcjonalny Dropout.
+            # Losowo zeruje 20% wyjść neuronów, zmuszając sieć do korzystania z innych ścieżek.
+            if hp.Boolean("use_dropout", default=False):  # Sprawdza czy włączyć Dropout.
+                model.add(layers.Dropout(0.2))  # Dodaje warstwę Dropout z p=0.2.
                 
-    else:
-        # Architektura Konwolucyjna (CNN)
+    else:  # Obsługuje przypadek architektury konwolucyjnej (CNN).
+        # === Architektura CNN (ConvNet) ===
+        # Sieć konwolucyjna, znacznie lepiej radząca sobie z danymi obrazkowymi
+        # dzięki zachowaniu struktury przestrzennej i wykrywaniu lokalnych cech.
         
-        # Pętla iterująca przez liczbę bloków konwolucyjnych (1-3) (typ: int)
-        for i in range(hp.Int("cnn_blocks", 1, 3)):
-            # Dodanie warstwy konwolucyjnej 2D
-            model.add(layers.Conv2D(
-                filters=hp.Int(f"filters_{i}", 16, 64, step=16),  # Liczba filtrów (typ: int)
-                kernel_size=(3, 3),  # Rozmiar okna splotu (typ: tuple[int, int])
-                activation="relu",  # Funkcja aktywacji (typ: str)
-                padding="same"  # Sposób traktowania krawędzi (typ: str)
-            ))  # (typ: keras.layers.convolutional.conv2d.Conv2D)
+        # Dynamiczna liczba bloków konwolucyjnych (Conv2D + MaxPooling).
+        for i in range(hp.Int("cnn_blocks", 1, 3)):  # Iteruje przez wylosowaną liczbę bloków.
+            # Warstwa splotowa (Conv2D).
+            # Uczy się filtrów (cech) takich jak krawędzie, tekstury.
+            # padding='same' utrzymuje rozmiar obrazu na wyjściu (np. 28x28).
+            model.add(layers.Conv2D(  # Dodaje warstwę konwolucyjną.
+                filters=hp.Int(f"filters_{i}", 16, 64, step=16),  # Losuje liczbę filtrów.
+                kernel_size=(3, 3),  # Ustawia rozmiar jądra splotu.
+                activation="relu",  # Ustawia  aktywację ReLU.
+                padding="same"  # Zachowuje wymiary przestrzenne.
+            ))
             
-            # Dodanie warstwy Max Pooling (zmniejszanie wymiarowości)
-            # pool_size=(2, 2) zmniejsza obraz dwukrotnie (typ: keras.layers.pooling.max_pooling2d.MaxPooling2D)
-            model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+            # Warstwa pulingu (MaxPooling).
+            # Redukuje wymiary przestrzenne (downsampling) o połowę, wybierając wartość maksymalną.
+            # Zmniejsza ilość obliczeń i zapewnia inwariantność na małe przesunięcia.
+            model.add(layers.MaxPooling2D(pool_size=(2, 2)))  # Dodaje warstwę MaxPooling.
         
-        # Spłaszczenie danych po operacjach konwolucyjnych (typ: keras.layers.core.flatten.Flatten)
-        model.add(layers.Flatten())
+        # Po przejściu przez warstwy splotowe, mapy cech są spłaszczane.
+        model.add(layers.Flatten())  # Spłaszcza mapy cech do wektora.
         
-        # Dodanie warstwy gęstej po spłaszczeniu (typ: keras.layers.core.dense.Dense)
-        model.add(layers.Dense(64, activation="relu"))
+        # Dodatkowa warstwa gęsta przetwarzająca wyekstrahowane cechy przed klasyfikacją.
+        model.add(layers.Dense(64, activation="relu"))  # Dodaje warstwę gęstą po konwolucjach.
     
-    # Warstwa wyjściowa - 10 klas (Fashion MNIST)
-    # 10 neuronów odpowiadających prawdopodobieństwom każdej klasy
-    # activation="softmax" zapewnia, że suma wyjść wynosi 1 (typ: keras.layers.core.dense.Dense)
-    model.add(layers.Dense(10, activation="softmax"))
+    # Warstwa Wyjściowa.
+    # 10 neuronów odpowiadających 10 klasom ubrań.
+    # Funkcja Softmax zamienia wyniki na rozkład prawdopodobieństwa (suma = 1.0).
+    model.add(layers.Dense(10, activation="softmax"))  # Dodaje warstwę wyjściową.
     
-    # Pobranie współczynnika uczenia z tunera (logarytmicznie)
-    learning_rate = hp.Float("lr", 1e-4, 1e-2, sampling="log")  # (typ: float)
+    # Dobór współczynnika uczenia (Learning Rate).
+    # Skala logarytmiczna jest naturalna dla tego parametru (np. 0.01, 0.001, 0.0001).
+    learning_rate = hp.Float("lr", 1e-4, 1e-2, sampling="log")  # Losuje learning rate.
     
-    # Kompilacja modelu
-    # Użycie optymalizatora Adam ze zmiennym learning rate
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),  # (typ: keras.optimizers.adam.Adam)
-        loss="sparse_categorical_crossentropy",  # Funkcja straty dla etykiet typu int (typ: str)
-        metrics=["accuracy"]  # Metryki do monitorowania (typ: list[str])
+    # Kompilacja modelu.
+    # Optimizer: Adam (Adaptive Moment Estimation) - standard w DL.
+    # Loss: sparse_categorical_crossentropy - bo etykiety to liczby całkowite (nie one-hot).
+    model.compile(  # Kompiluje model.
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),  # Ustawia optymalizator.
+        loss="sparse_categorical_crossentropy",  # Ustawia funkcję straty.
+        metrics=["accuracy"]  # Ustawia metrykę.
     )
     
-    # Zwrócenie skompilowanego modelu
-    return model  # (typ: keras.engine.sequential.Sequential)
+    return model  # Zwraca gotowy model.

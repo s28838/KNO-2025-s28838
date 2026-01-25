@@ -44,7 +44,7 @@ Zaimplementowano warstwę augmentacji zawierającą:
 W finalnym (najlepszym) modelu tuner wybrał wariant **bez augmentacji**. Może to wynikać z faktu, że przy ograniczonej liczbie epok (5 podczas szukania) modele z augmentacją uczą się wolniej (trudniejsze zadanie), przez co wypadły gorzej w krótkim czasie. Jednak docelowo augmentacja zazwyczaj poprawia generalizację przy dłuższym treningu.
 
 ## 6. Predykcja (Test Syntetyczny)
-Przeprowadzono test `predict.py` na wygenerowanym syntetycznie obrazie (biały prostokąt na czarnym tle, symulujący kształt koszulki).
+Przeprowadzono test `predict.py` na wygenerowanym syntetycznie obrazie (czarny prostokąt na białym tle, symulujący kształt koszulki).
 - **Wynik:** Shirt (Koszula)
 - **Pewność:** 79.40%
 System poprawnie zinterpretował prosty kształt geometryczny jako element górnej garderoby.

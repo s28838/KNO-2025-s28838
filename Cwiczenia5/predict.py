@@ -1,116 +1,98 @@
+import argparse
+import sys
 
-import argparse  # Import modułu argparse (typ: module) - parsowanie argumentów z linii komend
-import numpy as np  # Import biblioteki NumPy (typ: module) - obliczenia na tablicach
-import tensorflow as tf  # Import TensorFlow (typ: module) - ładowanie modelu i inferencja
-from PIL import Image, ImageOps  # Import klasy Image i modułu ImageOps z biblioteki Pillow (typ: class, module) - przetwarzanie obrazów
-import sys  # Import modułu sys (typ: module) - konfiguracja systemu
+import numpy as np
+import tensorflow as tf
+from PIL import Image, ImageOps
 
-# Konfiguracja kodowania wyjścia na UTF-8, aby polskie znaki w printach działały poprawnie na Windows
-sys.stdout.reconfigure(encoding='utf-8')
+# Wymuszenie kodowania UTF-8 dla standardowego wyjścia (konsola Windows).
+# Zapobiega to błędom UnicodeEncodeError przy próbie wypisania polskich znaków.
+sys.stdout.reconfigure(encoding='utf-8')  # Konfiguruje standardowe wyjście na UTF-8.
 
-# Lista etykiet klas dla zbioru Fashion MNIST (typ: list[str])
-# Indeksy odpowiadają wyjściom modelu (0-9)
+# Mapa nazw klas (index -> nazwa).
+# Kolejność jest zgodna z definicją zbioru danych Fashion MNIST.
 CLASS_NAMES = [
     "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
     "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
 ]
 
-def preprocess_image(image_path):
-    """
-    Wczytuje obraz, zmienia rozmiar na 28x28, konwertuje na skalę szarości,
-    wykonuje negatyw (białe tło -> czarne tło) i normalizuje.
-    Argument image_path to ścieżka do pliku (typ: str).
-    Zwraca przetworzony obraz jako tablicę NumPy lub None w przypadku błędu.
-    """
-    try:
-        # 1. Wczytaj obraz z pliku
-        img = Image.open(image_path)  # (typ: PIL.Image.Image)
-        
-        # 2. Konwersja do skali szarości ('L' - Luminance)
-        # Fashion MNIST to obrazy czarno-białe
-        img = img.convert("L")  # (typ: PIL.Image.Image)
-        
-        # 3. Negatyw (inwersja kolorów)
-        # Ważne: Typowe zdjęcie 'koszulki na białym tle' po konwersji na szarość ma jasne tło (wartości bliskie 255).
-        # Zbiór Fashion MNIST ma czarne tło (wartości bliskie 0) i jasny obiekt.
-        # Dlatego musimy odwrócić kolory: pixel = 255 - pixel
-        img = ImageOps.invert(img)  # (typ: PIL.Image.Image)
-        
-        # 4. Zmiana rozmiaru na 28x28 pikseli
-        # Taki rozmiar wejściowy ma wytrenowana sieć
-        img = img.resize((28, 28))  # (typ: PIL.Image.Image)
-        
-        # 5. Konwersja obiektu obrazu na tablicę NumPy
-        img_array = np.array(img)  # (typ: np.ndarray, shape=(28, 28))
-        
-        # 6. Normalizacja wartości pikseli (0-255 -> 0.0-1.0)
-        # Model był uczony na danych znormalizowanych
-        img_array = img_array.astype("float32") / 255.0  # (typ: np.ndarray)
-        
-        # 7. Dodanie wymiarów (batch_size, height, width, channels)
-        # Model oczekuje wejścia 4D: (N, 28, 28, 1)
-        # expand_dims(axis=0) dodaje wymiar batch (1, 28, 28)
-        img_array = np.expand_dims(img_array, axis=0) 
-        # expand_dims(axis=-1) dodaje wymiar kanału (1, 28, 28, 1)
-        img_array = np.expand_dims(img_array, axis=-1)  # (typ: np.ndarray, shape=(1, 28, 28, 1))
-        
-        return img_array
-    except Exception as e:
-        # Obsługa wyjątków (np. brak pliku, błędny format)
-        print(f"Błąd przetwarzania obrazu: {e}")  # (typ: None)
-        return None
 
-def main():
-    # Konfiguracja parsera argumentów
-    parser = argparse.ArgumentParser(description="Klasyfikator ubrań (Fashion MNIST)")  # (typ: argparse.ArgumentParser)
-    # Dodanie argumentu pozycyjnego 'image' (wymagany)
-    parser.add_argument("image", help="Ścieżka do pliku obrazka")  # (typ: None)
-    # Parsowanie argumentów z linii komend
-    args = parser.parse_args()  # (typ: argparse.Namespace)
-    
-    # Przetwarzanie obrazu wejściowego
-    input_data = preprocess_image(args.image)  # (typ: np.ndarray | None)
-    
-    # Jeśli wystąpił błąd w preprocessingu, zakończ działanie
-    if input_data is None:
-        return
+def preprocess_image(image_path):  # Przygotowuje obraz z dysku do inferencji przez sieć neuronową.
+    try:  # Rozpoczyna blok try-except.
+        # Wczytanie obrazu za pomocą biblioteki PIL (Pillow).
+        img = Image.open(image_path)  # Otwiera obraz ze ścieżki.
+        
+        # Konwersja do skali szarości.
+        # Kolor nie niesie kluczowej informacji dla kształtu ubrania w tym zbiorze.
+        img = img.convert("L")  # Konwertuje obraz na odcienie szarości.
+        
+        # Inwersja kolorów (Negative).
+        # Krytyczny krok dla zdjęć np. czarnej koszulki na białym tle.
+        # Sieć oczekuje jasnego obiektu na ciemnym tle (wartości pikseli tła ~0).
+        img = ImageOps.invert(img)  # Odwraca kolory (negatyw).
+        
+        # Zmiana rozmiaru na 28x28 (standard MNIST).
+        img = img.resize((28, 28))  # Skaluje obraz do wymiarów wejściowych sieci.
+        
+        # Konwersja na tablicę NumPy i normalizacja.
+        # Dzielenie przez 255.0 sprowadza wartości pikseli (0-255) do przedziału (0.0-1.0).
+        img_array = np.array(img).astype("float32") / 255.0  # Normalizuje wartości pikseli.
+        
+        # Rozszerzenie wymiarów.
+        # Keras oczekuje tensora 4D: (Batch_Size, Height, Width, Channels).
+        # Oryginalnie mamy (28, 28).
+        # Po expand_dims(axis=0) mamy (1, 28, 28).
+        img_array = np.expand_dims(img_array, axis=0)  # Dodaje wymiar batcha.
+        # Po expand_dims(axis=-1) mamy (1, 28, 28, 1).
+        img_array = np.expand_dims(img_array, axis=-1)  # Dodaje wymiar kanału.
+        
+        return img_array  # Zwraca przygotowany tensor.
+    except Exception as e:  # Obsługuje wyjątki podczas przetwarzania.
+        print(f"Błąd przetwarzania obrazu: {e}")  # Wypisuje błąd.
+        return None  # Zwraca None w przypadku błędu.
 
-    # Ładowanie wytrenowanego modelu
-    try:
-        # Wczytanie modelu z pliku .keras
-        model = tf.keras.models.load_model("fashion_model.keras")  # (typ: keras.engine.sequential.Sequential)
-    except OSError:
-        print("Błąd: Nie znaleziono modelu 'fashion_model.keras'. Uruchom najpierw train.py.")  # (typ: None)
-        return
 
-    # Predykcja
-    # verbose=0 wyłącza pasek postępu
-    predictions = model.predict(input_data, verbose=0)  # (typ: np.ndarray, shape=(1, 10))
+def main():  # Główna funkcja programu. Parsuje argumenty, ładuje model i wyświetla wynik predykcji.
+    parser = argparse.ArgumentParser(description="Klasyfikator ubrań (Fashion MNIST)")  # Tworzy parser argumentów.
+    parser.add_argument("image", help="Ścieżka do pliku obrazka")  # Dodaje argument ścieżki do obrazu.
+    args = parser.parse_args()  # Parsuje argumenty.
     
-    # Pobranie wyników dla pierwszego (i jedynego) obrazka w batchu
-    probs = predictions[0]  # (typ: np.ndarray, shape=(10,))
-    
-    # Znalezienie indeksu klasy z najwyższym prawdopodobieństwem
-    predicted_class_idx = np.argmax(probs)  # (typ: int64)
-    # Pobranie wartości pewności (prawdopodobieństwa) dla wybranej klasy
-    confidence = probs[predicted_class_idx]  # (typ: float32)
-    
-    # Pobranie nazwy klasy z listy tekstowej
-    class_name = CLASS_NAMES[predicted_class_idx]  # (typ: str)
-    
-    # Wyświetlenie wyników
-    print("-" * 30)
-    print(f"Wynik klasyfikacji:")
-    print(f"Klasa:   {class_name} (ID: {predicted_class_idx})")
-    # Formatowanie procentowe (.2%)
-    print(f"Pewność: {confidence:.2%}")
-    print("-" * 30)
-    print("Rozkład prawdopodobieństwa:")
-    # Iteracja po wszystkich klasach i wyświetlenie ich prawdopodobieństw
-    for i, p in enumerate(probs):
-        # Formatowanie: nazwa klasy wyrównana do lewej (12 znaków), prawdopodobieństwo do 4 miejsc po przecinku
-        print(f"  {CLASS_NAMES[i]:<12}: {p:.4f}")
+    # Preprocessing danych wejściowych.
+    input_data = preprocess_image(args.image)  # Przetwarza obraz wejściowy.
+    if input_data is None:  # Sprawdza czy przetwarzanie się powiodło.
+        return  # Kończy działanie w przypadku błędu.
 
-# Standardowy punkt wejścia programu
-if __name__ == "__main__":
-    main()
+    # Ładowanie modelu.
+    try:  # Blok try dla ładowania modelu.
+        model = tf.keras.models.load_model("fashion_model.keras")  # Ładuje model z pliku.
+    except OSError:  # Obsługa błędu braku pliku modelu.
+        print("Błąd: Nie znaleziono modelu 'fashion_model.keras'. Uruchom najpierw train.py.")  # Komunikat dla użytkownika.
+        return  # Kończy działanie.
+
+    # Inferencja.
+    # verbose=0 zapobiega wypisywaniu logów (np. "1/1 [================]") na stdout.
+    predictions = model.predict(input_data, verbose=0)  # Wykonuje predykcję.
+    
+    # Wyciągnięcie wektora prawdopodobieństw dla pierwszego elementu batcha.
+    probs = predictions[0]  # Pobiera wynik dla pojedynczego obrazu.
+    
+    # Identyfikacja klasy zwycięskiej.
+    predicted_class_idx = np.argmax(probs)  # Znajduje indeks klasy z max prawdopodobieństwem.
+    confidence = probs[predicted_class_idx]  # Pobiera wartość pewności.
+    class_name = CLASS_NAMES[predicted_class_idx]  # Pobiera nazwę klasy.
+    
+    # Prezentacja wyników.
+    print("-" * 30)  # Separator.
+    print(f"Wynik klasyfikacji:")  # Nagłówek.
+    print(f"Klasa:   {class_name} (ID: {predicted_class_idx})")  # Wypisuje wynik.
+    print(f"Pewność: {confidence:.2%}")  # Wypisuje pewność.
+    print("-" * 30)  # Separator.
+    print("Rozkład prawdopodobieństwa:")  # Nagłówek rozkładu.
+    
+    for i, p in enumerate(probs):  # Iteruje po prawdopodobieństwach wszystkich klas.
+        # Formatowanie: nazwa wyrównana do lewej (12 znaków), prawdopodobieństwo (4 cyfry po przecinku).
+        print(f"  {CLASS_NAMES[i]:<12}: {p:.4f}")  # Wypisuje sformatowaną linię.
+
+
+if __name__ == "__main__":  # Punkt wejścia skryptu.
+    main()  # Uruchamia funkcję main.

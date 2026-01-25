@@ -1,97 +1,150 @@
-import sys  # Import modułu sys (typ: module) - umożliwia dostęp do parametrów wiersza poleceń i funkcji systemowych
-import os  # Import modułu os (typ: module) - umożliwia interakcję z systemem operacyjnym (np. sprawdzanie plików)
-import csv  # Import modułu csv (typ: module) - obsługuje odczyt i zapis plików w formacie CSV
-import tensorflow as tf  # Import biblioteki TensorFlow (typ: module) - do uczenia maszynowego i sieci neuronowych, alias 'tf'
-import numpy as np  # Import biblioteki NumPy (typ: module) - do operacji na macierzach i tablicach, alias 'np'
-from PIL import Image  # Import klasy Image z biblioteki Pillow (typ: class) - do wczytywania i przetwarzania obrazów
-import matplotlib.pyplot as plt  # Import modułu pyplot z biblioteki Matplotlib (typ: module) - do tworzenia wykresów, alias 'plt'
+import csv
+import os
+import sys
 
-MODEL_PATH = "model.keras"  # Zmienna stała (typ: str) - przechowuje nazwę pliku, w którym zapisany będzie model
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from PIL import Image
 
-# Sekcja ładowania lub trenowania modelu
-if os.path.exists(MODEL_PATH):  # Sprawdzenie, czy plik modelu już istnieje (zwraca typ: bool)
-    print(f"Loading model from {MODEL_PATH}...")  # Wyświetlenie komunikatu (funkcja print, argument typ: str)
-    model = tf.keras.models.load_model(MODEL_PATH)  # Wczytanie gotowego modelu z pliku (zwraca typ: keras.engine.training.Model)
-else:  # Jeśli plik modelu nie istnieje
-    print("Training new model...")  # Wyświetlenie komunikatu o rozpoczęciu treningu (argument typ: str)
-    mnist = tf.keras.datasets.mnist  # Przypisanie referencji do zbioru danych MNIST z Keras (typ: module)
-    (x_train, y_train), (x_test, y_test) = mnist.load_data()  # Pobranie danych: x to obrazy (typ: np.ndarray), y to etykiety (typ: np.ndarray)
-    
-    # Normalizacja danych: dzielenie przez 255.0, aby wartości pikseli były w zakresie 0-1 (typ: np.ndarray, float64)
-    x_train, x_test = x_train / 255.0, x_test / 255.0  
+MODEL_PATH = "model.keras"  # Definiuje stałą ze ścieżką do pliku modelu, używana w całym skrypcie do zapisu i ponownego odczytu wytrenowanego modelu.
 
-    model = tf.keras.models.Sequential(  # Utworzenie sekwencyjnego modelu sieci neuronowej (typ: keras.engine.sequential.Sequential)
+# Sprawdzenie czy model już istnieje, aby uniknąć niepotrzebnego ponownego treningu.
+# Jeśli plik modelu zostanie znaleziony, zostanie załadowany. W przeciwnym razie rozpocznie się proces uczenia.
+if os.path.exists(MODEL_PATH):  # Sprawdza fizyczne istnienie pliku modelu na dysku, decyduje w przepływie sterowania czy trenować czy ładować.
+    print(f"Loading model from {MODEL_PATH}...")  # Wyświetla komunikat informacyjny dla użytkownika, informuje o rozpoczęciu ładowania istniejącego modelu.
+    model = tf.keras.models.load_model(MODEL_PATH)  # Wczytuje kompletny model (architektura + wagi) z pliku, inicjalizuje zmienną model do użycia w predykcji.
+else:  # Blok else wykonuje się, gdy plik modelu nie istnieje, inicjuje procedurę treningu od zera.
+    print("Training new model...")  # Wyświetla komunikat informacyjny dla użytkownika, sygnalizuje rozpoczęcie nowego procesu treningowego.
+    # Pobranie zbioru MNIST z repozytorium Keras.
+    # Zbiór składa się z 60 000 obrazów treningowych i 10 000 testowych.
+    mnist = tf.keras.datasets.mnist  # Przypisuje moduł zbioru danych MNIST z Keras do zmiennej, umożliwia dostęp do metody load_data.
+    (x_train, y_train), (x_test, y_test) = mnist.load_data()  # Pobiera i rozpakowuje dane do krotek treningowych i testowych, dane te są podstawą uczenia i walidacji.
+
+    # Normalizacja wartości pikseli.
+    # Domyślne wartości pikseli są w zakresie 0-255 (uint8).
+    # Skalowanie ich do przedziału 0.0-1.0 (float) znacznie przyspiesza zbieżność algorytmu 
+    # optymalizacyjnego (Gradient Descent) i poprawia stabilność uczenia.
+    x_train, x_test = x_train / 255.0, x_test / 255.0  # Dzieli wartości pikseli przez 255.0, normalizuje dane wejściowe do zakresu [0, 1] dla lepszej wydajności sieci.
+
+    # Definicja modelu sekwencyjnego using Keras API.
+    model = tf.keras.models.Sequential(  # Inicjalizuje pusty model sekwencyjny Keras, kontener na stos warstw neuronalnych.
         [
-            tf.keras.layers.Flatten(input_shape=(28, 28)),  # Warstwa spłaszczająca wejście 28x28 do wektora jednowymiarowego (typ: keras.layers.core.flatten.Flatten)
-            tf.keras.layers.Dense(128, activation="relu"),  # Warstwa gęsta (w pełni połączona) ze 128 neuronami i funkcją aktywacji ReLU (typ: keras.layers.core.dense.Dense)
-            tf.keras.layers.Dropout(0.2),  # Warstwa Dropout - wyłącza losowo 20% neuronów, zapobiega przeuczeniu (typ: keras.layers.regularization.dropout.Dropout)
-            tf.keras.layers.Dense(10, activation="softmax"),  # Warstwa wyjściowa z 10 neuronami (klasy 0-9) i aktywacją Softmax (prawdopodobieństwa) (typ: keras.layers.core.dense.Dense)
+            # Warstwa Flatten przekształca macierz 2D (28x28) w wektor 1D (784 elementy).
+            # Jest to konieczne, ponieważ warstwy Dense oczekują płaskiego wektora cech.
+            tf.keras.layers.Flatten(input_shape=(28, 28)),  # Dodaje warstwę spłaszczającą wejście, przygotowuje dane obrazu 2D dla warstw gęstych.
+            
+            # Warstwa gęsta (Dense) z funkcją aktywacji ReLU.
+            # 128 neuronów pozwala modelowi nauczyć się nieliniowych relacji złożonych cech.
+            tf.keras.layers.Dense(128, activation="relu"),  # Dodaje warstwę ukrytą z 128 neuronami i aktywacją ReLU, główna warstwa ucząca się cech.
+            
+            # Warstwa Dropout (rzucanie monetą dla każdego neuronu).
+            # Losowo "wyłącza" 20% neuronów w trakcie każdego kroku treningowego.
+            # Zmusza to sieć do nauki redundantnych reprezentacji, co zapobiega overfittingowi (przeuczeniu).
+            tf.keras.layers.Dropout(0.2),  # Dodaje warstwę Dropout z prawdopodobieństwem 0.2, mechanizm regularyzacji zapobiegający przeuczeniu podczas treningu.
+            
+            # Warstwa wyjściowa z 10 neuronami (dla cyfr 0-9).
+            # Funkcja Softmax zamienia surowe wyniki (logits) na rozkład prawdopodobieństwa sumujący się do 1.
+            tf.keras.layers.Dense(10, activation="softmax"),  # Dodaje warstwę wyjściową z 10 neuronami i aktywacją Softmax, generuje prawdopodobieństwa dla każdej klasy cyfr.
         ]
     )
-    
-    model.compile(  # Konfiguracja procesu uczenia modelu
-        optimizer="adam",  # Wybór optymalizatora Adam (typ: str)
-        loss="sparse_categorical_crossentropy",  # Funkcja straty dla klasyfikacji wieloklasowej (typ: str)
-        metrics=["accuracy"]  # Metryka do monitorowania - dokładność (typ: list[str])
+
+    # Kompilacja modelu.
+    # Adam to adaptacyjny algorytm optymalizacji, który zazwyczaj działa dobrze bez strojenia.
+    # sparse_categorical_crossentropy jest odpowiednia, gdy etykiety są liczbami całkowitymi (a nie one-hot).
+    model.compile(  # Konfiguruje proces uczenia modelu, definiuje optymalizator, funkcję straty i metryki.
+        optimizer="adam",  # Wybiera optymalizator Adam, algorytm aktualizacji wag w procesie uczenia.
+        loss="sparse_categorical_crossentropy",  # Ustawia funkcję straty dla klas całkowitoliczbowych, miara błędu modelu do minimalizacji.
+        metrics=["accuracy"],  # Definiuje monitorowane metryki, w tym przypadku dokładność (accuracy) do oceny jakości modelu.
     )
+
+    # Rozpoczęcie procesu uczenia.
+    # epochs=5: Model przejdzie przez cały zbiór treningowy 5 razy.
+    # validation_data: Użycie zbioru testowego do monitorowania postępów na danych, których model nie widzi.
+    history = model.fit(x_train, y_train, epochs=5, validation_data=(x_test, y_test))  # Uruchamia pętlę treningową na 5 epok, zwraca obiekt historii z metrykami procesu uczenia.
+
+    # Ostateczna ewaluacja na zbiorze testowym po zakończeniu treningu.
+    model.evaluate(x_test, y_test)  # Przeprowadza ewaluację modelu na danych testowych, wypisuje ostateczne wskaźniki skuteczności.
     
-    # Trenowanie modelu na danych treningowych przez 5 epok, z walidacją na danych testowych (zwraca typ: keras.callbacks.History)
-    history = model.fit(x_train, y_train, epochs=5, validation_data=(x_test, y_test))
-    
-    model.evaluate(x_test, y_test)  # Ocena modelu na danych testowych po treningu (zwraca listę wyników: strata, dokładność)
-    model.save(MODEL_PATH)  # Zapisanie wytrenowanego modelu do pliku .keras
-    print(f"Model saved to {MODEL_PATH}")  # Wyświetlenie informacji o zapisaniu modelu (typ: str)
+    # Zapis modelu do pliku w formacie Keras, co pozwala na jego późniejsze użycie bez retrenowania.
+    model.save(MODEL_PATH)  # Zapisuje stan modelu i wagi do pliku na dysku, umożliwia trwałość wytrenowanej sieci.
+    print(f"Model saved to {MODEL_PATH}")  # Informuje użytkownika o pomyślnym zapisie modelu, potwierdzenie zakończenia operacji IO.
 
-    # Zapis krzywej uczenia do pliku CSV
-    with open("learning_curve.csv", "w", newline="") as f:  # Otwarcie pliku w trybie zapisu (typ kontekstu: io.TextIOWrapper)
-        writer = csv.writer(f)  # Utworzenie obiektu do zapisu CSV (typ: _csv.writer)
-        writer.writerow(history.history.keys())  # Zapisanie nagłówków kolumn (klucze słownika historii, typ: dict_keys)
-        writer.writerows(zip(*history.history.values()))  # Zapisanie wierszy z danymi (transpozycja wartości słownika, typ: zip)
-    print("Learning curve saved to learning_curve.csv")  # Komunikat o zapisaniu danych (typ: str)
+    # Eksport historii uczenia do CSV.
+    # Pozwala to na zewnętrzną analizę lub wizualizację przebiegu funkcji straty i dokładności.
+    with open("learning_curve.csv", "w", newline="") as f:  # Otwiera plik learning_curve.csv do zapisu, używany jako uchwyt do eksportu danych statystycznych.
+        writer = csv.writer(f)  # Tworzy obiekt writera CSV powiązany z plikiem, służy do zapisu wierszy danych.
+        writer.writerow(history.history.keys())  # Zapisuje nagłówek CSV z nazwami metryk, definiuje strukturę pliku wynikowego.
+        writer.writerows(zip(*history.history.values()))  # Zapisuje wartości metryk epoka po epoce, transponuje dane słownika historii do formatu wierszowego.
+    print("Learning curve saved to learning_curve.csv")  # Informuje użytkownika o zapisaniu logów uczenia, potwierdzenie operacji eksportu danych.
 
-# Obsługa predykcji lub rysowania wykresu na podstawie argumentów wiersza poleceń
-if len(sys.argv) > 1:  # Sprawdzenie, czy podano dodatkowe argumenty (sys.argv to lista, len zwraca int > 1)
-    image_path = sys.argv[1]  # Pobranie pierwszego argumentu jako ścieżki lub opcji (typ: str)
+# ==============================================================================
+# Obsługa Argumentów Linii Poleceń (CLI)
+# ==============================================================================
+# Jeśli skrypt został uruchomiony z dodatkowymi argumentami, wykonujemy specyficzne akcje:
+# 1. "--plot": Rysuje wykresy uczenia.
+# 2. <ścieżka_do_pliku>: Traktuje argument jako ścieżkę do obrazu i wykonuje predykcję.
 
-    if image_path == "--plot":  # Sprawdzenie, czy argument to flaga "--plot" (porównanie stringów)
-        # Rysowanie krzywej uczenia
-        with open("learning_curve.csv", "r") as f:  # Otwarcie pliku CSV do odczytu (typ kontekstu: io.TextIOWrapper)
-            reader = csv.DictReader(f)  # Utworzenie czytnika słownikowego CSV (typ: csv.DictReader)
-            data = list(reader)  # Konwersja iteratora do listy słowników (typ: list[dict])
+if len(sys.argv) > 1:  # Sprawdza czy przekazano argumenty wywołania skryptu, decyduje o uruchomieniu trybu interaktywnego/CLI.
+    image_path = sys.argv[1]  # Pobiera pierwszy argument po nazwie skryptu, przypisuje go do zmiennej image_path jako potencjalną ścieżkę lub komendę.
 
-        epochs = range(1, len(data) + 1)  # Utworzenie zakresu epok od 1 do liczby wierszy (typ: range)
-        loss = [float(row["loss"]) for row in data]  # Wyciągnięcie listy strat treningowych, konwersja na float (typ: list[float])
-        val_loss = [float(row["val_loss"]) for row in data]  # Wyciągnięcie listy strat walidacyjnych (typ: list[float])
-        accuracy = [float(row["accuracy"]) for row in data]  # Wyciągnięcie listy dokładności treningowych (typ: list[float])
-        val_accuracy = [float(row["val_accuracy"]) for row in data]  # Wyciągnięcie listy dokładności walidacyjnych (typ: list[float])
+    if image_path == "--plot":  # Sprawdza czy argument to flaga "--plot", steruje wyborem trybu wizualizacji wykresów.
+        # Tryb wizualizacji: Odczyt danych z CSV i generowanie wykresów Matplotlib.
+        with open("learning_curve.csv", "r") as f:  # Otwiera plik z historią uczenia do odczytu, źródło danych do wykresów.
+            reader = csv.DictReader(f)  # Tworzy czytnik CSV mapujący wiersze na słowniki, ułatwia dostęp do kolumn przez nazwy.
+            data = list(reader)  # Wczytuje wszystkie wiersze z pliku do listy, ładuje dane do pamięci operacyjnej.
 
-        plt.figure(figsize=(12, 4))  # Utworzenie nowego okna wykresu o wymiarach 12x4 cali (typ: matplotlib.figure.Figure)
+        epochs = range(1, len(data) + 1)  # Generuje zakres numerów epok na podstawie ilości danych, oś X wykresów.
+        loss = [float(row["loss"]) for row in data]  # Ekstrahuje i konwertuje wartości straty treningowej, seria danych dla wykresu straty.
+        val_loss = [float(row["val_loss"]) for row in data]  # Ekstrahuje wartości straty walidacyjnej, seria porównawcza dla wykresu straty.
+        accuracy = [float(row["accuracy"]) for row in data]  # Ekstrahuje wartości dokładności treningowej, seria danych dla wykresu dokładności.
+        val_accuracy = [float(row["val_accuracy"]) for row in data]  # Ekstrahuje wartości dokładności walidacyjnej, seria porównawcza dla wykresu dokładności.
 
-        plt.subplot(1, 2, 1)  # Utworzenie pierwszego podwykresu w siatce 1x2 (typ: matplotlib.axes._subplots.AxesSubplot)
-        plt.plot(epochs, loss, label="Training Loss")  # Rysowanie wykresu straty treningowej (oś X: epochs, oś Y: loss)
-        plt.plot(epochs, val_loss, label="Validation Loss")  # Rysowanie wykresu straty walidacyjnej
-        plt.xlabel("Epoch")  # Etykieta osi X (typ: str)
-        plt.ylabel("Loss")  # Etykieta osi Y (typ: str)
-        plt.legend()  # Wyświetlenie legendy
+        plt.figure(figsize=(12, 4))  # Inicjalizuje nowe okno wykresu o wymiarach 12x4 cala, kontener dla subplotów.
 
-        plt.subplot(1, 2, 2)  # Utworzenie drugiego podwykresu
-        plt.plot(epochs, accuracy, label="Training Accuracy")  # Wykres dokładności treningowej
-        plt.plot(epochs, val_accuracy, label="Validation Accuracy")  # Wykres dokładności walidacyjnej
-        plt.xlabel("Epoch")  # Etykieta osi X
-        plt.ylabel("Accuracy")  # Etykieta osi Y
-        plt.legend()  # Legenda
+        # Wykres funkcji straty (Loss).
+        # Spadek straty świadczy o tym, że model uczy się minimalizować błąd.
+        plt.subplot(1, 2, 1)  # Tworzy pierwszy subplot w układzie 1x2, miejsce na wykres straty.
+        plt.plot(epochs, loss, label="Training Loss")  # Rysuje linię straty treningowej, wizualizacja błędu na zbiorze uczącym.
+        plt.plot(epochs, val_loss, label="Validation Loss")  # Rysuje linię straty walidacyjnej, wizualizacja błędu na zbiorze testowym.
+        plt.xlabel("Epoch")  # Podpisuje oś X jako "Epoch", informacja o jednostce czasu treningu.
+        plt.ylabel("Loss")  # Podpisuje oś Y jako "Loss", informacja o mierzonej wartości.
+        plt.legend()  # Wyświetla legendę wykresu, pozwala rozróżnić serie danych.
 
-        plt.tight_layout()  # Automatyczne dopasowanie odstępów między wykresami
-        plt.show()  # Wyświetlenie okna z wykresami (blokuje wykonanie programu do zamknięcia okna)
-    else:
-        # Wczytanie i przetworzenie obrazu do predykcji
-        img = Image.open(image_path).convert("L")  # Otwarcie obrazu i konwersja na skalę szarości ('L') (typ: PIL.Image.Image)
-        img = img.resize((28, 28))  # Zmiana rozmiaru obrazu na 28x28 pikseli zgodnie z wejściem modelu (zwraca typ: PIL.Image.Image)
-        img_array = np.array(img) / 255.0  # Konwersja obrazu na tablicę NumPy i normalizacja (typ: np.ndarray, float64)
-        img_array = np.expand_dims(img_array, axis=0)  # Dodanie wymiaru partii (batch dimension), kształt (1, 28, 28) (typ: np.ndarray)
+        # Wykres dokładności (Accuracy).
+        # Wzrost dokładności świadczy o poprawnym generalizowaniu wiedzy.
+        plt.subplot(1, 2, 2)  # Tworzy drugi subplot w układzie 1x2, miejsce na wykres dokładności.
+        plt.plot(epochs, accuracy, label="Training Accuracy")  # Rysuje linię dokładności treningowej, wizualizacja skuteczności na zbiorze uczącym.
+        plt.plot(epochs, val_accuracy, label="Validation Accuracy")  # Rysuje linię dokładności walidacyjnej, wizualizacja skuteczności na zbiorze testowym.
+        plt.xlabel("Epoch")  # Podpisuje oś X jako "Epoch", informacja o jednostce czasu treningu.
+        plt.ylabel("Accuracy")  # Podpisuje oś Y jako "Accuracy", informacja o mierzonej wartości.
+        plt.legend()  # Wyświetla legendę wykresu, pozwala rozróżnić serie danych.
 
-        # Wykonanie predykcji
-        predictions = model.predict(img_array, verbose=0)  # Uruchomienie modelu na obrazie (zwraca typ: np.ndarray z prawdopodobieństwami)
-        digit = np.argmax(predictions[0])  # Znalezienie indeksu z największą wartością (cyfra o największym prawdopodobieństwie, typ: int64)
+        plt.tight_layout()  # Automatycznie dopasowuje odstępy między wykresami, poprawia czytelność layoutu.
+        plt.show()  # Wyświetla okno z wykresami, blokuje wykonanie do momentu zamknięcia okna.
+    else:  # Blok else wykonuje się, gdy argument nie jest flagą "--plot", zakłada, że podano ścieżkę do pliku obrazu.
+        # Tryb predykcji: Przetwarzanie pojedynczego obrazu.
+        
+        # Wczytanie obrazu i konwersja na skalę szarości ("L").
+        # Jest to kluczowe, ponieważ model był uczony na obrazach jednokanałowych.
+        img = Image.open(image_path).convert("L")  # Otwiera plik graficzny i konwertuje na odcienie szarości, przygotowanie wstępne danych wejściowych.
+        
+        # Skalowanie do wymiaru 28x28, zgodnego z wejściem sieci.
+        img = img.resize((28, 28))  # Zmienia rozmiar obrazu na 28x28 pikseli, dopasowanie do warstwy wejściowej modelu.
+        
+        # Konwersja na macierz NumPy i normalizacja (0-1).
+        img_array = np.array(img) / 255.0  # Konwertuje obiekt obrazu na tablicę i normalizuje wartości, przygotowanie numeryczne danych.
+        
+        # Dodanie wymiaru batcha (axis=0).
+        # Model oczekuje wejścia w formacie (Batch_Size, Height, Width).
+        # Tutaj tworzymy batch jednoelementowy: (1, 28, 28).
+        img_array = np.expand_dims(img_array, axis=0)  # Dodaje dodatkowy wymiar na początku tablicy, tworzy batch o rozmiarze 1 dla modelu.
 
-        print(f"Predicted digit: {digit}")  # Wyświetlenie wyniku predykcji (f-string)
+        # Wykonanie inferencji.
+        predictions = model.predict(img_array, verbose=0)  # Uruchamia model na przygotowanym obrazie, zwraca surowe wyniki predykcji (prawdopodobieństwa).
+        
+        # Wynik to tablica 10 prawdopodobieństw.
+        # argmax zwraca indeks największej wartości, który odpowiada przewidzianej cyfrze.
+        digit = np.argmax(predictions[0])  # Znajduje indeks elementu z najwyższym prawdopodobieństwem, interpretuje wynik jako konkretną cyfrę.
+
+        print(f"Predicted digit: {digit}")  # Wypisuje wynik predykcji na konsolę, informacja końcowa dla użytkownika.

@@ -1,90 +1,95 @@
+import os
 
-import pandas as pd  # Import biblioteki pandas (typ: module) - do analizy danych
-import numpy as np  # Import biblioteki NumPy (typ: module) - do obliczeń numerycznych
-import tensorflow as tf  # Import biblioteki TensorFlow (typ: module) - framework uczenia maszynowego
-from tensorflow.keras import Sequential  # Import klasy Sequential (typ: class) - prosty stos warstw
-from tensorflow.keras.layers import Dense, Normalization  # Import warstw Dense i Normalization (typ: class, class)
-from tensorflow.keras.optimizers import Adam  # Import optymalizatora Adam (typ: class)
-from tensorflow.keras.utils import to_categorical  # Import funkcji do one-hot encoding (typ: function)
-import os  # Import modułu os (typ: module) - operacje na systemie plików
+import pandas as pd
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense, Normalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
 
-# 1. Load Data
-# Definicja listy nazw wszystkich kolumn w pliku CSV (typ: list[str])
+# Lista nazw kolumn (zgodna z dokumentacją zbioru danych).
 COLUMNS = [
     "class", "alcohol", "malic_acid", "ash", "alcalinity_of_ash", "magnesium",
     "total_phenols", "flavanoids", "nonflavanoid_phenols", "proanthocyanins",
     "color_intensity", "hue", "od280_od315", "proline"
 ]
 
-# Definicja cech (wszystkie kolumny oprócz pierwszej "class") (typ: list[str])
-# Używamy tego samego nazewnictwa co w wine_predict.py dla spójności
-FEATURES = COLUMNS[1:]
+# Definicja cech (wszystkie kolumny oprócz pierwszej "class").
+FEATURES = COLUMNS[1:]  # Wybiera wszystkie elementy listy poza pierwszym, określając cechy wejściowe modelu.
 
-# Ustalenie ścieżki do pliku CSV względem bieżącego skryptu
-csv_path = os.path.join(os.path.dirname(__file__), "wine.csv")  # (typ: str)
+# Dynamiczne ustalenie ścieżki do pliku CSV (z tego samego katalogu co skrypt).
+csv_path = os.path.join(os.path.dirname(__file__), "wine.csv")  # Łączy ścieżkę katalogu skryptu z nazwą pliku, tworząc relatywną ścieżkę do danych.
 
-# Wczytanie danych z CSV do DataFrame (typ: pandas.DataFrame)
-df = pd.read_csv(csv_path, header=None, names=COLUMNS)
+# Wczytanie danych z CSV.
+df = pd.read_csv(csv_path, header=None, names=COLUMNS)  # Wczytuje plik CSV do obiektu DataFrame, przypisując zdefiniowane nazwy kolumn.
 
-# Przetasowanie danych losowo i reset indeksu
-# frac=1.0 oznacza wzięcie 100% wierszy
-# reset_index(drop=True) usuwa stary indeks
-df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)  # (typ: pandas.DataFrame)
+# Tasowanie danych.
+# Randomizacja kolejności próbek jest kluczowa dla stochastycznego spadku wzdłuż gradientu (SGD).
+df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)  # Miesza losowo wiersze ramki danych i resetuje indeksowanie.
 
-# Oddzielenie cech (X) od etykiet (y)
-# drop("class") usuwa kolumnę z klasą
-# .values konwertuje na tablicę NumPy
-X = df.drop("class", axis=1).values.astype("float32")  # (typ: np.ndarray, dtype=float32)
+# Ekstrakcja macierzy cech X.
+X = df.drop("class", axis=1).values.astype("float32")  # Usuwa kolumnę 'class' i konwertuje resztę na macierz float32.
 
-# Przygotowanie etykiet
-# Odejmowanie 1, aby klasy 1,2,3 zamienić na 0,1,2
-y = df["class"].values.astype("int32") - 1  # (typ: np.ndarray, dtype=int32)
-# Konwersja na one-hot encoding (np. 0 -> [1, 0, 0])
-y = to_categorical(y, 3)  # (typ: np.ndarray, dtype=float32)
+# Przygotowanie etykiet y.
+# Konwersja z zakresu 1-3 na 0-2 dla one-hot encoding.
+y = df["class"].values.astype("int32") - 1  # Pobiera kolumnę 'class' i przesuwa indeksację o -1 (zakres 0-2).
+y = to_categorical(y, 3)  # Zamienia liczby całkowite na wektory one-hot encoding.
 
-# Podział na zbiór treningowy i walidacyjny (80% / 20%)
-val_split = int(0.8 * len(X))  # Obliczenie indeksu podziału (typ: int)
-X_train, X_val = X[:val_split], X[val_split:]  # Slicing tablicy X (typ: np.ndarray, np.ndarray)
-y_train, y_val = y[:val_split], y[val_split:]  # Slicing tablicy y (typ: np.ndarray, np.ndarray)
+# Podział na zbiór treningowy (80%) i walidacyjny (20%).
+val_split = int(0.8 * len(X))  # Oblicza punkt podziału zbioru danych (80% próbek).
+X_train, X_val = X[:val_split], X[val_split:]  # Dzieli macierz cech na część treningową i walidacyjną.
+y_train, y_val = y[:val_split], y[val_split:]  # Dzieli macierz etykiet na część treningową i walidacyjną.
 
-# 2. Normalization Layer
-# Utworzenie warstwy normalizacyjnej, która będzie częścią modelu
-normalizer = Normalization()  # (typ: keras.layers.preprocessing.normalization.Normalization)
-# Dopasowanie (adaptacja) warstwy do danych treningowych (obliczenie średniej i odchylenia)
-normalizer.adapt(X_train)  # (metoda zwraca None)
+# Utworzenie warstwy normalizacyjnej.
+# W tym podejściu normalizacja jest częścią samego grafu modelu,
+# co ułatwia wdrażanie (model "sam wie" jak znormalizować surowe dane).
+normalizer = Normalization()  # Inicjalizuje warstwę normalizacyjną Keras.
 
-# 3. Create Model
-# Definicja modelu sekwencyjnego
-model = Sequential([
-    normalizer,  # Pierwsza warstwa to normalizacja (aplikowana automatycznie na wejściu)
-    Dense(64, activation='relu', kernel_initializer='he_uniform'),  # Warstwa ukryta 64 neurony, ReLu, inicjalizacja He
-    Dense(32, activation='relu', kernel_initializer='he_uniform'),  # Warstwa ukryta 32 neurony
-    Dense(3, activation='softmax')  # Warstwa wyjściowa 3 neurony (klasy), Softmax (prawdopodobieństwo)
-])  # (typ: keras.engine.sequential.Sequential)
+# Adaptacja normalizatora do statystyk zbioru treningowego (obliczenie mean i variance).
+normalizer.adapt(X_train)  # Oblicza średnią i wariancję z danych treningowych, kalibrując normalizację.
 
-# Kompilacja modelu
-model.compile(optimizer=Adam(learning_rate=0.001),  # Optymalizator Adam z LR=0.001
-              loss='categorical_crossentropy',  # Funkcja straty dla klasyfikacji wieloklasowej
-              metrics=['accuracy'])  # Metryka do monitorowania
+# Definicja architektury modelu (Baseline MLP).
+model = Sequential([  # Inicjalizuje sekwencyjny model Keras.
+    # Warstwa wejściowa - automatyczna normalizacja.
+    normalizer,  # Dodaje warstwę normalizacji jako pierwszą operację w modelu.
+    
+    # Warstwa ukryta 1: 64 neurony, aktywacja ReLU.
+    # Inicjalizator 'he_uniform' jest zalecany dla ReLU.
+    Dense(64, activation='relu', kernel_initializer='he_uniform'),  # Dodaje warstwę gęstą z 64 neuronami i inicjalizacją He.
+    
+    # Warstwa ukryta 2: 32 neurony, aktywacja ReLU.
+    Dense(32, activation='relu', kernel_initializer='he_uniform'),  # Dodaje drugą warstwę gęstą z 32 neuronami.
+    
+    # Warstwa wyjściowa: 3 klasy, aktywacja Softmax (rozkład prawdopodobieństwa).
+    Dense(3, activation='softmax')  # Dodaje warstwę wyjściową z 3 neuronami i funkcją softmax.
+])
 
-# 4. Train
-print("Training Baseline Model...")  # (typ: None)
-# Trening modelu
-history = model.fit(X_train, y_train,  # Dane treningowe
-                    validation_data=(X_val, y_val),  # Dane walidacyjne
-                    epochs=100,  # Liczba epok
-                    batch_size=16,  # Rozmiar partii
-                    verbose=0)  # Wyłączenie logowania w konsoli (typ: keras.callbacks.History)
+# Kompilacja modelu.
+model.compile(  # Konfiguruje proces uczenia modelu.
+    optimizer=Adam(learning_rate=0.001),  # Ustawia optymalizator Adam ze stałym współczynnikiem uczenia.
+    loss='categorical_crossentropy',  # Wybiera funkcję straty dla klasyfikacji wieloklasowej.
+    metrics=['accuracy']  # Nakazuje monitorowanie dokładności podczas treningu.
+)
 
-# Ocena modelu na zbiorze walidacyjnym
-loss, acc = model.evaluate(X_val, y_val, verbose=0)  # (zwraca tuple: float, float)
-print(f"Baseline Accuracy: {acc:.4f}")  # Wyświetlenie dokładności (typ: str)
-print(f"Baseline Loss: {loss:.4f}")  # Wyświetlenie straty (typ: str)
+print("Training Baseline Model...")  # Wypisuje komunikat o rozpoczęciu treningu.
 
-# Zapisanie modelu (ważne dla Cwiczenia4/wine_predict.py)
-model.save("wine_baseline.keras")
-print("Saved baseline model to wine_baseline.keras")
+# Trening modelu.
+history = model.fit(  # Uruchamia pętlę treningową.
+    X_train, y_train,  # Przekazuje dane treningowe.
+    validation_data=(X_val, y_val),  # Przekazuje dane walidacyjne do oceny postępów.
+    epochs=100,  # Ustawia liczbę epok na 100.
+    batch_size=16,  # Ustawia rozmiar batcha na 16.
+    verbose=0  # Wyłącza logowanie postępów w konsoli.
+)
 
-# Zapis wyników bazowych do pliku tekstowego
-with open("baseline_result.txt", "w") as f:  # (kontekst menedżera pliku)
-    f.write(f"Accuracy: {acc:.4f}\nLoss: {loss:.4f}")  # Zapis danych (typ: int - liczba znaków)
+# Ewaluacja na zbiorze walidacyjnym.
+loss, acc = model.evaluate(X_val, y_val, verbose=0)  # Oblicza stratę i dokładność na zbiorze walidacyjnym.
+print(f"Baseline Accuracy: {acc:.4f}")  # Wypisuje osiągniętą dokładność modelu.
+print(f"Baseline Loss: {loss:.4f}")  # Wypisuje osiągniętą stratę modelu.
+
+# Zapisanie modelu w formacie Keras.
+model.save("wine_baseline.keras")  # Zapisuje wytrenowany model do pliku.
+print("Saved baseline model to wine_baseline.keras")  # Potwierdza zapisanie modelu.
+
+# Zapis wyników do pliku tekstowego dla łatwego porównania.
+with open("baseline_result.txt", "w") as f:  # Otwiera plik tekstowy do zapisu wyników.
+    f.write(f"Accuracy: {acc:.4f}\nLoss: {loss:.4f}")  # Zapisuje metryki w formacie tekstowym.

@@ -1,142 +1,134 @@
+import os
 
-import pandas as pd  # Import pandas (typ: module) - analiza danych tabelarycznych
-import numpy as np  # Import NumPy (typ: module) - operacje macierzowe
-import tensorflow as tf  # Import TensorFlow (typ: module) - framework ML
-import keras_tuner as kt  # Import Keras Tuner (typ: module) - biblioteka do optymalizacji hiperparametrów
-from tensorflow.keras import Sequential  # Import klasy Sequential (typ: class)
-from tensorflow.keras.layers import Dense, Normalization  # Import warstw neuronowych i normalizacyjnych (typ: class, class)
-from tensorflow.keras.optimizers import Adam  # Import optymalizatora (typ: class)
-from tensorflow.keras.utils import to_categorical  # Import utility do kodowania etykiet (typ: function)
-from sklearn.metrics import confusion_matrix, classification_report  # Import metryk ewaluacji (typ: function, function)
-import os  # Import modułu os (typ: module) - obsługa ścieżek
+import keras_tuner as kt
+import numpy as np
+import pandas as pd
+from sklearn.metrics import classification_report, confusion_matrix
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense, Normalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
 
-# 1. Load Data
-# Definicja nazw kolumn datasetu (typ: list[str])
+# Definicja nazw kolumn datasetu.
 cols = [
     "class", "alcohol", "malic_acid", "ash", "alcalinity_of_ash", "magnesium",
     "total_phenols", "flavanoids", "nonflavanoid_phenols", "proanthocyanins",
     "color_intensity", "hue", "od280_od315", "proline"
 ]
 
-# Budowanie ścieżki do pliku csv niezależnie od katalogu roboczego (typ: str)
-csv_path = os.path.join(os.path.dirname(__file__), "wine.csv")
-# Wczytanie pliku CSV (typ: pandas.DataFrame)
-df = pd.read_csv(csv_path, header=None, names=cols)
-# Losowe tasowanie danych (frac=1.0) i reset indeksu (typ: pandas.DataFrame)
-df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
+# Budowanie ścieżki do pliku csv.
+csv_path = os.path.join(os.path.dirname(__file__), "wine.csv")  # Łączy ścieżkę bieżącą z nazwą pliku danych, lokalizacja zasobu.
 
-# Konwersja cech na float32 (typ: np.ndarray)
-X = df.drop("class", axis=1).values.astype("float32")
-# Przesunięcie etykiet z 1-3 na 0-2 (typ: np.ndarray)
-y = df["class"].values.astype("int32") - 1
-# One-hot encoding etykiet (typ: np.ndarray)
-y = to_categorical(y, 3)
+# Wczytanie i przygotowanie danych (analogicznie do baseline.py).
+df = pd.read_csv(csv_path, header=None, names=cols)  # Wczytuje dane z pliku CSV do ramki danych Pandas, nadając nazwy kolumnom.
+df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)  # Tasuje dane losowo dla zapewnienia reprezentatywności w podziałach.
 
-# Obliczenie punktu podziału (80% trening, 20% walidacja) (typ: int)
-val_split = int(0.8 * len(X))
-# Podział danych (typ: np.ndarray, np.ndarray)
-X_train, X_val = X[:val_split], X[val_split:]
-# Podział etykiet (typ: np.ndarray, np.ndarray)
-y_train, y_val = y[:val_split], y[val_split:]
+X = df.drop("class", axis=1).values.astype("float32")  # Wyodrębnia cechy do macierzy X, usuwając kolumnę klasy.
+y = df["class"].values.astype("int32") - 1  # Wyodrębnia etykiety, konwertując je na zakres od 0.
+y = to_categorical(y, 3)  # Konwertuje etykiety liczbowe na reprezentację one-hot.
 
-# 2. Prepare Normalization
-# Inicjalizacja warstwy normalizacji (typ: tensorflow.keras.layers.Normalization)
-normalizer = Normalization()
-# Dopasowanie normalizatora do danych treningowych (obliczenie średniej i odchylenia)
-normalizer.adapt(X_train)
+# Podział na trening i walidację (80/20).
+val_split = int(0.8 * len(X))  # Oblicza indeks podziału zbioru na treningowy i walidacyjny.
+X_train, X_val = X[:val_split], X[val_split:]  # Dzieli macierz cech na podzbiory.
+y_train, y_val = y[:val_split], y[val_split:]  # Dzieli macierz etykiet na podzbiory.
 
-# 3. Model Builder
-# Funkcja budująca model, przyjmuje hiperparametry (hp)
-def build_model(hp):
-    # Inicjalizacja pustego modelu sekwencyjnego (typ: tensorflow.keras.Sequential)
-    model = Sequential()
-    # Dodanie warstwy normalizacji jako pierwszej (typ: None)
-    model.add(normalizer)
+# Normalizacja zintegrowana z modelem.
+normalizer = Normalization()  # Inicjalizuje warstwę normalizacyjną.
+normalizer.adapt(X_train)  # Kalibruje normalizator na podstawie danych treningowych.
+
+
+def build_model(hp):  # Definiuje funkcję budującą model z hiperparametrami z obiektu hp.
+    model = Sequential()  # Inicjalizuje pusty model sekwencyjny.
     
-    # Hiperparametr: Liczba warstw ukrytych (int od 1 do 3)
-    # Pętla dodająca dynamicznie warstwy Dense
-    for i in range(hp.Int('num_layers', 1, 3)):
-        model.add(Dense(
-            # Hiperparametr: liczba neuronów w warstwie i-tej (od 16 do 128 co 16)
+    # Warstwa normalizacyjna jako pierwsza.
+    model.add(normalizer)  # Dodaje warstwę normalizacyjną na wejściu sieci.
+    
+    # Dynamiczne dodawanie warstw ukrytych.
+    # Tuner zdecyduje ile razy pętla się wykona (1, 2 lub 3 razy).
+    for i in range(hp.Int('num_layers', 1, 3)):  # Iteruje przez liczbę warstw wybraną przez tuner (od 1 do 3).
+        
+        # Wybór funkcji aktywacji.
+        activation_choice = hp.Choice('activation', ['relu', 'tanh'])  # Losuje funkcję aktywacji z podanych opcji.
+        
+        # Dobór odpowiedniego inicjalizatora wag.
+        # He dla ReLU, Glorot dla Tanh.
+        if activation_choice == 'relu':  # Sprawdza czy wylosowano ReLU.
+            init = 'he_uniform'  # Ustawia inicjalizator He Uniform dla ReLU.
+        else:
+            init = 'glorot_uniform'  # Ustawia inicjalizator Glorot Uniform dla Tanh.
+            
+        model.add(Dense(  # Dodaje warstwę gęstą do modelu.
+            # Liczba neuronów w i-tej warstwie (step=16 oznacza kroki co 16).
             units=hp.Int(f'units_{i}', min_value=16, max_value=128, step=16),
-            # Hiperparametr: funkcja aktywacji (wybór między 'relu' a 'tanh')
-            activation=hp.Choice('activation', ['relu', 'tanh']),
-            # Dynamiczny dobór inicjalizatora wag w zależności od funkcji aktywacji
-            # He dla ReLU, Glorot (Xavier) dla innych (np. tanh)
-            kernel_initializer='he_uniform' if hp.get('activation') == 'relu' else 'glorot_uniform'
+            activation=activation_choice,  # Ustawia wybraną funkcję aktywacji.
+            kernel_initializer=init  # Ustawia dobrany inicjalizator wag.
         ))
     
-    # Warstwa wyjściowa stała: 3 klasy, softmax (typ: None)
-    model.add(Dense(3, activation='softmax'))
+    # Warstwa wyjściowa (3 klasy).
+    model.add(Dense(3, activation='softmax'))  # Dodaje warstwę wyjściową z softmax dla klasyfikacji.
     
-    # Hiperparametr: współczynnik uczenia (learning rate)
-    # Logarytmiczne próbkowanie od 0.0001 do 0.01
-    lr = hp.Float('lr', min_value=1e-4, max_value=1e-2, sampling='log')
+    # Strojenie learning rate (skala logarytmiczna sprawdza rzędy wielkości).
+    lr = hp.Float('lr', min_value=1e-4, max_value=1e-2, sampling='log')  # Losuje współczynnik uczenia w skali logarytmicznej.
     
-    # Kompilacja modelu z wylosowanym LR (typ: None)
-    model.compile(optimizer=Adam(learning_rate=lr),
-                  loss='categorical_crossentropy',
-                  metrics=['accuracy'])
-    return model # Zwraca skompilowany model Keras (typ: tensorflow.keras.Model)
+    model.compile(optimizer=Adam(learning_rate=lr),  # Kompiluje model z wylosowanym LR.
+                  loss='categorical_crossentropy',  # Ustawia funkcję straty.
+                  metrics=['accuracy'])  # Ustawia metrykę oceny.
+    return model  # Zwraca skompilowany model.
 
-# 4. Tuner
-# Konfiguracja tunera RandomSearch
-tuner = kt.RandomSearch(
-    build_model,                     # Funkcja budująca model
-    objective='val_accuracy',        # Metryka do optymalizacji (dokładność walidacyjna)
-    max_trials=20,                   # Maksymalna liczba różnych kombinacji hiperparametrów do sprawdzenia
-    executions_per_trial=1,          # Liczba uruchomień dla każdej kombinacji (aby uśrednić wynik)
-    directory='kt_dir',              # Katalog na wyniki tunera
-    project_name='wine_tuning_simple' # Nazwa projektu (podkatalogu)
+
+# Konfiguracja algorytmu przeszukiwania (Random Search).
+# Wykona 20 losowych prób, każdą trenując raz.
+tuner = kt.RandomSearch(  # Inicjalizuje tuner RandomSearch.
+    build_model,  # Przekazuje funkcję budującą model.
+    objective='val_accuracy',  # Cel optymalizacji to dokładność walidacyjna.
+    max_trials=20,  # Liczba próbnych konfiguracji.
+    executions_per_trial=1,  # Liczba treningów dla każdej konfiguracji.
+    directory='kt_dir',  # Katalog roboczy tunera.
+    project_name='wine_tuning_simple',  # Nazwa projektu tunera.
+    overwrite=True  # Nadpisuje poprzednie wyniki w katalogu.
 )
 
-# Wyświetlenie podsumowania przestrzeni poszukiwań (typ: None)
-tuner.search_space_summary()
+tuner.search_space_summary()  # Wyświetla podsumowanie przestrzeni przeszukiwania.
 
-print("\nStarting search...") # (typ: None)
-# Uruchomienie procesu przeszukiwania (typ: None)
-tuner.search(X_train, y_train, epochs=50, validation_data=(X_val, y_val), verbose=0)
+print("\nStarting search...")  # Loguje rozpoczęcie procesu szukania.
+# Start przeszukiwania. verbose=0 ukrywa logi każdej epoki.
+tuner.search(X_train, y_train, epochs=50, validation_data=(X_val, y_val), verbose=0)  # Uruchamia przeszukiwanie przestrzeni hiperparametrów.
 
-# 5. Results
-# Pobranie najlepszych hiperparametrów (zwraca listę, bierzemy pierwszy/najlepszy zestaw)
-best_hps = tuner.get_best_hyperparameters(num_trials=1)[0] # (typ: keras_tuner.HyperParameters)
+# Pobranie najlepszych hiperparametrów.
+best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]  # Pobiera najlepszy zestaw hiperparametrów.
 
-print("\nBest Hyperparameters:") # (typ: None)
-# Wyświetlenie znalezionych najlepszych wartości
-print(f"  Num Layers: {best_hps.get('num_layers')}") # (typ: None)
-print(f"  Activation: {best_hps.get('activation')}") # (typ: None)
-print(f"  Learning Rate: {best_hps.get('lr')}") # (typ: None)
+print("\nBest Hyperparameters:")  # Nagłówek sekcji wyników.
+print(f"  Num Layers: {best_hps.get('num_layers')}")  # Wypisuje znalezioną liczbę warstw.
+print(f"  Activation: {best_hps.get('activation')}")  # Wypisuje wybraną aktywację.
+print(f"  Learning Rate: {best_hps.get('lr')}")  # Wypisuje znaleziony learning rate.
 
-# Retrain best model
-print("\nRetraining best model...") # (typ: None)
-# Zbudowanie modelu na nowo z najlepszymi parametrami (typ: tensorflow.keras.Model)
-best_model = tuner.hypermodel.build(best_hps)
-# Ponowne trenowanie najlepszego modelu, tym razem dłużej (100 epok)
-history = best_model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val), verbose=0) # (typ: keras.callbacks.History)
+print("\nRetraining best model...")  # Loguje rozpoczęcie finalnego treningu.
+# Ponowne zbudowanie modelu z najlepszymi parametrami.
+best_model = tuner.hypermodel.build(best_hps)  # Buduje model używając najlepszych parametrów.
 
-# Evaluate
-# Ostateczna ocena na zbiorze walidacyjnym (typ: tuple[float, float])
-loss, acc = best_model.evaluate(X_val, y_val, verbose=0)
-print(f"\nBest Model Accuracy: {acc:.4f}") # (typ: None)
+# Pełny trening najlepszego modelu (więcej epok dla zbieżności).
+best_model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val), verbose=0)  # Trenuje najlepszy model przez 100 epok.
 
-# Save
-# Zapis modelu do pliku .keras (typ: None)
-best_model.save("wine_tuned.keras")
-print("Saved best model to wine_tuned.keras") # (typ: None)
+# Ewaluacja.
+loss, acc = best_model.evaluate(X_val, y_val, verbose=0)  # Ocenia model na zbiorze walidacyjnym.
+print(f"\nBest Model Accuracy: {acc:.4f}")  # Wypisuje końcową dokładność.
 
-# Confusion Matrix
-# Predykcja na zbiorze walidacyjnym (zwraca prawdopodobieństwa) (typ: np.ndarray)
-y_pred = best_model.predict(X_val)
-# Wybór klasy o najwyższym prawdopodobieństwie (typ: np.ndarray)
-y_pred_classes = np.argmax(y_pred, axis=1)
-# Konwersja etykiet one-hot na numery klas (typ: np.ndarray)
-y_true_classes = np.argmax(y_val, axis=1)
+# Zapis.
+best_model.save("wine_tuned.keras")  # Zapisuje najlepszy model do pliku.
+print("Saved best model to wine_tuned.keras")  # Potwierdza zapis.
 
-# Obliczenie macierzy pomyłek (typ: np.ndarray)
-cm = confusion_matrix(y_true_classes, y_pred_classes)
-print("\nConfusion Matrix:") # (typ: None)
-print(cm) # (typ: None)
+# ==============================================================================
+# Analiza Wyników
+# ==============================================================================
 
-print("\nClassification Report:") # (typ: None)
-# Generowanie raportu klasyfikacji (precyzja, czułość, F1) (typ: str)
-print(classification_report(y_true_classes, y_pred_classes))
+# Generowanie macierzy pomyłek i raportu klasyfikacji.
+y_pred = best_model.predict(X_val)  # Wykonuje predykcję na zbiorze walidacyjnym.
+y_pred_classes = np.argmax(y_pred, axis=1)  # Konwertuje prawdopodobieństwa na indeksy klas.
+y_true_classes = np.argmax(y_val, axis=1)  # Konwertuje one-hot na indeksy klas rzeczywistych.
+
+cm = confusion_matrix(y_true_classes, y_pred_classes)  # Tworzy macierz pomyłek.
+print("\nConfusion Matrix:")  # Nagłówek macierzy.
+print(cm)  # Wypisuje macierz pomyłek.
+
+print("\nClassification Report:")  # Nagłówek raportu klasyfikacji.
+print(classification_report(y_true_classes, y_pred_classes))  # Generuje i wypisuje raport klasyfikacji.
